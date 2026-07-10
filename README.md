@@ -28,10 +28,28 @@ City-level lookups use MaxMind's GeoLite2 City database, looked up locally (no n
 2. Generate a license key and download `GeoLite2-City.mmdb`.
 3. Place it in the project root, or set `HITATLAS_GEOIP_DB` to its path.
 
-Each matched request is printed as a JSON line:
+Each matched request is printed as a JSON line and broadcast to any connected frontend:
 
 ```
 {"ip": "8.8.8.8", "lat": 37.751, "lng": -97.822, "city": "Ashburn", "country": "US"}
 ```
+
+## Live feed (backend)
+
+`main.py` also serves a Server-Sent Events endpoint at `/events`, bound to `127.0.0.1:8765` by default (`HITATLAS_HTTP_HOST` / `HITATLAS_HTTP_PORT` to change). It only speaks plain HTTP with no CORS headers, since it's meant to sit behind an Nginx reverse proxy on the same origin as the frontend, not be exposed to the internet directly.
+
+Example Nginx location block on the frontend's vhost, note `proxy_buffering off` is required, otherwise Nginx buffers the stream and the browser never sees events in real time:
+
+```
+location /events {
+    proxy_pass http://127.0.0.1:8765;
+    proxy_http_version 1.1;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 24h;
+}
+```
+
+The frontend (a separate static site, see `frontend/`) connects with `new EventSource("/events")`.
 
 ## Work in Progress

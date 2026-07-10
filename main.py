@@ -1,4 +1,5 @@
 import glob
+import http.server
 import ipaddress
 import json
 import logging
@@ -21,6 +22,8 @@ except ModuleNotFoundError:
 CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
 RESCAN_INTERVAL_SECONDS = float(os.environ.get("HITATLAS_RESCAN_INTERVAL", "30"))
 GEOIP_DB_PATH = os.environ.get("HITATLAS_GEOIP_DB", "GeoLite2-City.mmdb")
+HTTP_HOST = os.environ.get("HITATLAS_HTTP_HOST", "127.0.0.1")
+HTTP_PORT = int(os.environ.get("HITATLAS_HTTP_PORT", "8765"))
 
 logging.basicConfig(
     level=os.environ.get("HITATLAS_LOG_LEVEL", "INFO"),
@@ -181,6 +184,50 @@ def rescan_globs(specs: list[SourceSpec], out_queue: "queue.Queue[str]", started
                     start_tailing(path, spec, out_queue, started)
 
 
+subscribers: list["queue.Queue[str]"] = []
+subscribers_lock = threading.Lock()
+
+
+def broadcast(payload: str) -> None:
+    with subscribers_lock:
+        for subscriber in subscribers:
+            subscriber.put(payload)
+
+
+class SSEHandler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:
+        if self.path != "/events":
+            self.send_response(404)
+            self.end_headers()
+            return
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "keep-alive")
+        self.end_headers()
+
+        client_queue: "queue.Queue[str]" = queue.Queue()
+        with subscribers_lock:
+            subscribers.append(client_queue)
+        logger.info("SSE client connected (%d total)", len(subscribers))
+
+        try:
+            while True:
+                payload = client_queue.get()
+                self.wfile.write(f"data: {payload}\n\n".encode())
+                self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        finally:
+            with subscribers_lock:
+                subscribers.remove(client_queue)
+            logger.info("SSE client disconnected (%d total)", len(subscribers))
+
+    def log_message(self, format: str, *args: object) -> None:
+        pass
+
+
 def main() -> None:
     if not os.path.exists(GEOIP_DB_PATH):
         logger.error(
@@ -214,6 +261,10 @@ def main() -> None:
 
     threading.Thread(target=rescan_globs, args=(specs, out_queue, started), daemon=True).start()
 
+    httpd = http.server.ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), SSEHandler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    logger.info("SSE server listening on http://%s:%d/events", HTTP_HOST, HTTP_PORT)
+
     logger.info("started %d source thread(s), waiting for matching requests", len(started))
     last_ip = None
     try:
@@ -227,7 +278,9 @@ def main() -> None:
             if hit is None:
                 logger.debug("no geolocation found for %s", ip)
                 continue
-            print(json.dumps(hit), flush=True)
+            payload = json.dumps(hit)
+            print(payload, flush=True)
+            broadcast(payload)
     except KeyboardInterrupt:
         logger.info("stopping")
     finally:
