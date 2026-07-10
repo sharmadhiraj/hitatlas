@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>HitAtlas</title>
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
 <style>
   :root {
     --bg: #0b0f14;
@@ -40,6 +39,13 @@
     border-radius: 12px;
     overflow: hidden;
     background: var(--bg);
+    display: block;
+  }
+
+  #map .land {
+    fill: #1c2733;
+    stroke: rgba(255, 255, 255, 0.06);
+    stroke-width: 0.5;
   }
 
   .hud {
@@ -149,14 +155,6 @@
     to { opacity: 1; transform: translateY(0); }
   }
 
-  .leaflet-control-attribution {
-    background: rgba(11, 15, 20, 0.7) !important;
-    color: var(--muted) !important;
-  }
-  .leaflet-control-attribution a {
-    color: var(--muted) !important;
-  }
-
   @media (max-width: 640px) {
     body {
       flex-direction: column;
@@ -192,7 +190,7 @@
 </head>
 <body>
 
-<div id="map"></div>
+<svg id="map"></svg>
 
 <div class="hud header">
   <div class="header-top">
@@ -208,38 +206,31 @@
   <div id="feed-list"></div>
 </div>
 
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+<script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
-  const worldBounds = L.latLngBounds([-85, -180], [85, 180]);
+  const svg = d3.select("#map");
+  const landPath = svg.append("path").attr("class", "land");
+  const pingsGroup = svg.append("g").attr("class", "pings");
 
-  const map = L.map("map", {
-    zoomControl: false,
-    dragging: false,
-    scrollWheelZoom: false,
-    doubleClickZoom: false,
-    touchZoom: false,
-    boxZoom: false,
-    keyboard: false,
-    maxBounds: worldBounds,
-    maxBoundsViscosity: 1.0,
-  });
+  const projection = d3.geoEquirectangular();
+  const pathGenerator = d3.geoPath(projection);
+  let landFeature = null;
 
-  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
-    subdomains: "abcd",
-    maxZoom: 19,
-    noWrap: true,
-  }).addTo(map);
-
-  function fitMapNoPoleCrop() {
-    map.invalidateSize();
-    const size = map.getSize();
-    const zoom = Math.max(0, Math.floor(Math.log2(size.y / 256)));
-    map.setView([0, 0], zoom, { animate: false });
+  function resizeMap() {
+    const rect = svg.node().getBoundingClientRect();
+    svg.attr("viewBox", `0 0 ${rect.width} ${rect.height}`);
+    if (!landFeature) return;
+    projection.fitSize([rect.width, rect.height], landFeature);
+    landPath.attr("d", pathGenerator(landFeature));
   }
 
-  fitMapNoPoleCrop();
-  window.addEventListener("resize", fitMapNoPoleCrop);
+  d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").then((topology) => {
+    landFeature = topojson.feature(topology, topology.objects.land);
+    resizeMap();
+  });
+
+  window.addEventListener("resize", resizeMap);
 
   const statusDot = document.getElementById("status-dot");
   const statsSummaryEl = document.getElementById("stats-summary");
@@ -304,15 +295,21 @@
   }
 
   function pingMap(hit) {
-    const marker = L.circleMarker([hit.lat, hit.lng], {
-      radius: 3,
-      color: "#35d0ba",
-      weight: 2,
-      fillColor: "#35d0ba",
-      fillOpacity: 0.6,
-    }).addTo(map);
+    const coords = projection([hit.lng, hit.lat]);
+    if (!coords) return;
+    const [x, y] = coords;
 
-    marker.bindTooltip(`${formatPlace(hit)}<br>${hit.ip}`);
+    const circle = pingsGroup
+      .append("circle")
+      .attr("cx", x)
+      .attr("cy", y)
+      .attr("r", 3)
+      .attr("fill", "#35d0ba")
+      .attr("fill-opacity", 0.6)
+      .attr("stroke", "#35d0ba")
+      .attr("stroke-width", 2);
+
+    circle.append("title").text(`${formatPlace(hit)}\n${hit.ip}`);
 
     const start = performance.now();
     const duration = 1400;
@@ -320,12 +317,14 @@
 
     function animate(now) {
       const t = Math.min((now - start) / duration, 1);
-      marker.setRadius(3 + t * maxRadius);
-      marker.setStyle({ opacity: 1 - t, fillOpacity: 0.6 * (1 - t) });
+      circle
+        .attr("r", 3 + t * maxRadius)
+        .attr("fill-opacity", 0.6 * (1 - t))
+        .attr("stroke-opacity", 1 - t);
       if (t < 1) {
         requestAnimationFrame(animate);
       } else {
-        map.removeLayer(marker);
+        circle.remove();
       }
     }
     requestAnimationFrame(animate);
