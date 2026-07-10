@@ -1,5 +1,29 @@
 [[source]]
-path = "/var/log/nginx/access.log"
+path = "/home/multaitechnology/logs/nginx/access.log"
+format = "nginx-combined"
+
+[[source]]
+path = "/home/sharmadhiraj-notes/logs/nginx/access.log"
+format = "nginx-combined"
+
+[[source]]
+path = "/home/awesomeflutter/logs/nginx/access.log"
+format = "nginx-combined"
+
+[[source]]
+path = "/home/dhirajsharma/logs/nginx/access.log"
+format = "nginx-combined"
+
+[[source]]
+path = "/home/rajeshdaikojokes/logs/nginx/access.log"
+format = "nginx-combined"
+
+[[source]]
+path = "/home/sharmadhiraj/logs/nginx/access.log"
+format = "nginx-combined"
+
+[[source]]
+path = "/home/sharmadhiraj-rapid-api/logs/nginx/access.log"
 format = "nginx-combined"
 
 # [[source]]
