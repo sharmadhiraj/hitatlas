@@ -20,4 +20,18 @@ Supported `format` values: `nginx-combined`, `apache-combined`, `caddy-json`, or
 
 `path_glob` is re-scanned periodically (every 30s by default, set `HITATLAS_RESCAN_INTERVAL` to change) to pick up newly added sites without a restart.
 
+## GeoIP setup
+
+City-level lookups use MaxMind's GeoLite2 City database, looked up locally (no network calls per request):
+
+1. Create a free account at https://www.maxmind.com/en/geolite2/signup
+2. Generate a license key and download `GeoLite2-City.mmdb`.
+3. Place it in the project root, or set `HITATLAS_GEOIP_DB` to its path.
+
+Each matched request is printed as a JSON line:
+
+```
+{"ip": "8.8.8.8", "lat": 37.751, "lng": -97.822, "city": "Ashburn", "country": "US"}
+```
+
 ## Work in Progress

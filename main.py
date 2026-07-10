@@ -10,6 +10,9 @@ import threading
 import time
 from dataclasses import dataclass
 
+import geoip2.database
+import geoip2.errors
+
 try:
     import tomllib
 except ModuleNotFoundError:
@@ -17,6 +20,7 @@ except ModuleNotFoundError:
 
 CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
 RESCAN_INTERVAL_SECONDS = float(os.environ.get("HITATLAS_RESCAN_INTERVAL", "30"))
+GEOIP_DB_PATH = os.environ.get("HITATLAS_GEOIP_DB", "GeoLite2-City.mmdb")
 
 logging.basicConfig(
     level=os.environ.get("HITATLAS_LOG_LEVEL", "INFO"),
@@ -97,6 +101,24 @@ def is_public_ip(ip: str) -> bool:
     )
 
 
+def geolocate(reader: geoip2.database.Reader, ip: str) -> dict[str, object] | None:
+    try:
+        city = reader.city(ip)
+    except geoip2.errors.AddressNotFoundError:
+        return None
+
+    if city.location.latitude is None or city.location.longitude is None:
+        return None
+
+    return {
+        "ip": ip,
+        "lat": city.location.latitude,
+        "lng": city.location.longitude,
+        "city": city.city.name,
+        "country": city.country.iso_code,
+    }
+
+
 def follow(path: str):
     if not os.path.exists(path):
         logger.warning("%s does not exist yet, waiting for it to appear", path)
@@ -160,6 +182,16 @@ def rescan_globs(specs: list[SourceSpec], out_queue: "queue.Queue[str]", started
 
 
 def main() -> None:
+    if not os.path.exists(GEOIP_DB_PATH):
+        logger.error(
+            "GeoIP database not found at %s. Download GeoLite2-City.mmdb from "
+            "https://www.maxmind.com/en/accounts/current/geoip/downloads "
+            "(requires a free MaxMind account) and set HITATLAS_GEOIP_DB to its path.",
+            GEOIP_DB_PATH,
+        )
+        sys.exit(1)
+    reader = geoip2.database.Reader(GEOIP_DB_PATH)
+
     logger.info("loading config from %s", CONFIG_PATH)
     specs = load_source_specs(CONFIG_PATH)
     if not specs:
@@ -190,9 +222,16 @@ def main() -> None:
             if ip == last_ip:
                 continue
             last_ip = ip
-            print(ip, flush=True)
+
+            hit = geolocate(reader, ip)
+            if hit is None:
+                logger.debug("no geolocation found for %s", ip)
+                continue
+            print(json.dumps(hit), flush=True)
     except KeyboardInterrupt:
         logger.info("stopping")
+    finally:
+        reader.close()
 
 
 if __name__ == "__main__":
