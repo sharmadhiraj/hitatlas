@@ -14,7 +14,7 @@ def extract_src_ip(line: str) -> str | None:
     return src_ip
 
 
-proc = subprocess.Popen(CMD, stdout=subprocess.PIPE, text=True, bufsize=1)
+proc = subprocess.Popen(CMD, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
 
 assert proc.stdout is not None
 
