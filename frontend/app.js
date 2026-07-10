@@ -123,13 +123,13 @@ function pingMap(hit) {
     .attr("cx", x)
     .attr("cy", y)
     .attr("r", 0)
-    .attr("fill", "#35d0ba");
+    .attr("fill", "#f5f7fa");
 
   circle.append("title").text(`${formatPlace(hit)}\n${hit.ip}`);
 
   const start = performance.now();
   const popDuration = 120;
-  const fadeDuration = 500;
+  const fadeDuration = 1400;
   const maxRadius = 4;
 
   function animate(now) {
