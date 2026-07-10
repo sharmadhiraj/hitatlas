@@ -16,6 +16,7 @@ except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[import-not-found,no-redef]
 
 CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
+RESCAN_INTERVAL_SECONDS = float(os.environ.get("HITATLAS_RESCAN_INTERVAL", "30"))
 
 logging.basicConfig(
     level=os.environ.get("HITATLAS_LOG_LEVEL", "INFO"),
@@ -38,11 +39,19 @@ class Source:
     regex: re.Pattern[str] | None
 
 
-def load_sources(config_path: str) -> list[Source]:
+@dataclass
+class SourceSpec:
+    path: str | None
+    path_glob: str | None
+    format: str
+    regex: re.Pattern[str] | None
+
+
+def load_source_specs(config_path: str) -> list[SourceSpec]:
     with open(config_path, "rb") as f:
         config = tomllib.load(f)
 
-    sources = []
+    specs = []
     for raw in config.get("source", []):
         fmt = raw["format"]
         if fmt == "custom_regex":
@@ -54,15 +63,10 @@ def load_sources(config_path: str) -> list[Source]:
         else:
             raise ValueError(f"unknown format {fmt!r}")
 
-        if "path_glob" in raw:
-            paths = sorted(glob.glob(raw["path_glob"]))
-            if not paths:
-                logger.warning("path_glob %r matched no files yet", raw["path_glob"])
-            for path in paths:
-                sources.append(Source(path=path, format=fmt, regex=regex))
-        else:
-            sources.append(Source(path=raw["path"], format=fmt, regex=regex))
-    return sources
+        specs.append(
+            SourceSpec(path=raw.get("path"), path_glob=raw.get("path_glob"), format=fmt, regex=regex)
+        )
+    return specs
 
 
 def extract_ip(line: str, source: Source) -> str | None:
@@ -132,21 +136,53 @@ def tail_source(source: Source, out_queue: "queue.Queue[str]") -> None:
             logger.debug("%s: no ip matched line: %r", source.path, line.rstrip())
 
 
+def start_tailing(path: str, spec: SourceSpec, out_queue: "queue.Queue[str]", started: set[str]) -> None:
+    if path in started:
+        return
+    started.add(path)
+    logger.info("configured source: %s (%s)", path, spec.format)
+    source = Source(path=path, format=spec.format, regex=spec.regex)
+    threading.Thread(target=tail_source, args=(source, out_queue), daemon=True).start()
+
+
+def rescan_globs(specs: list[SourceSpec], out_queue: "queue.Queue[str]", started: set[str]) -> None:
+    glob_specs = [spec for spec in specs if spec.path_glob]
+    if not glob_specs:
+        return
+    while True:
+        time.sleep(RESCAN_INTERVAL_SECONDS)
+        for spec in glob_specs:
+            assert spec.path_glob is not None
+            for path in sorted(glob.glob(spec.path_glob)):
+                if path not in started:
+                    logger.info("discovered new source via %s: %s", spec.path_glob, path)
+                    start_tailing(path, spec, out_queue, started)
+
+
 def main() -> None:
     logger.info("loading config from %s", CONFIG_PATH)
-    sources = load_sources(CONFIG_PATH)
-    if not sources:
+    specs = load_source_specs(CONFIG_PATH)
+    if not specs:
         logger.error("no sources configured in %s", CONFIG_PATH)
         sys.exit(1)
 
-    for source in sources:
-        logger.info("configured source: %s (%s)", source.path, source.format)
-
     out_queue: "queue.Queue[str]" = queue.Queue()
-    for source in sources:
-        threading.Thread(target=tail_source, args=(source, out_queue), daemon=True).start()
+    started: set[str] = set()
 
-    logger.info("started %d source thread(s), waiting for matching requests", len(sources))
+    for spec in specs:
+        if spec.path_glob:
+            paths = sorted(glob.glob(spec.path_glob))
+            if not paths:
+                logger.warning("path_glob %r matched no files yet", spec.path_glob)
+            for path in paths:
+                start_tailing(path, spec, out_queue, started)
+        else:
+            assert spec.path is not None
+            start_tailing(spec.path, spec, out_queue, started)
+
+    threading.Thread(target=rescan_globs, args=(specs, out_queue, started), daemon=True).start()
+
+    logger.info("started %d source thread(s), waiting for matching requests", len(started))
     last_ip = None
     try:
         while True:

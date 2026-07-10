@@ -18,6 +18,6 @@ format = "nginx-combined"
 
 Supported `format` values: `nginx-combined`, `apache-combined`, `caddy-json`, or `custom_regex` (requires a `regex` key with a named `ip` group).
 
-`path_glob` is resolved once at startup, restart the process to pick up newly added sites.
+`path_glob` is re-scanned periodically (every 30s by default, set `HITATLAS_RESCAN_INTERVAL` to change) to pick up newly added sites without a restart.
 
 ## Work in Progress
