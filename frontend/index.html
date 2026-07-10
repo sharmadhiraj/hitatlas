@@ -220,28 +220,26 @@
 <script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
-  const svg = d3.select("#map-svg");
+  const REF_WIDTH = 960;
+  const REF_HEIGHT = 480;
+
+  const svg = d3
+    .select("#map-svg")
+    .attr("viewBox", `0 0 ${REF_WIDTH} ${REF_HEIGHT}`)
+    .attr("preserveAspectRatio", "none");
   const landPath = svg.append("path").attr("class", "land");
   const pingsGroup = svg.append("g").attr("class", "pings");
 
-  const projection = d3.geoEquirectangular();
+  const projection = d3
+    .geoEquirectangular()
+    .scale(REF_WIDTH / (2 * Math.PI))
+    .translate([REF_WIDTH / 2, REF_HEIGHT / 2]);
   const pathGenerator = d3.geoPath(projection);
-  let landFeature = null;
-
-  function resizeMap() {
-    const rect = svg.node().getBoundingClientRect();
-    svg.attr("viewBox", `0 0 ${rect.width} ${rect.height}`);
-    if (!landFeature) return;
-    projection.fitSize([rect.width, rect.height], landFeature);
-    landPath.attr("d", pathGenerator(landFeature));
-  }
 
   d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").then((topology) => {
-    landFeature = topojson.feature(topology, topology.objects.land);
-    resizeMap();
+    const landFeature = topojson.feature(topology, topology.objects.land);
+    landPath.attr("d", pathGenerator(landFeature));
   });
-
-  window.addEventListener("resize", resizeMap);
 
   const statusDot = document.getElementById("status-dot");
   const statsSummaryEl = document.getElementById("stats-summary");
