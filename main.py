@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import logging
 import os
 import queue
 import re
@@ -14,6 +15,13 @@ except ModuleNotFoundError:
     import tomli as tomllib  # type: ignore[import-not-found,no-redef]
 
 CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
+
+logging.basicConfig(
+    level=os.environ.get("HITATLAS_LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s %(message)s",
+    stream=sys.stderr,
+)
+logger = logging.getLogger("hitatlas")
 
 PRESET_PATTERNS = {
     "nginx-combined": re.compile(r'^(?P<ip>\S+) \S+ \S+ \[.+?\] "\S+ \S+ \S+" \d+ \d+'),
@@ -77,9 +85,12 @@ def is_public_ip(ip: str) -> bool:
 
 
 def follow(path: str):
-    while not os.path.exists(path):
-        time.sleep(1)
+    if not os.path.exists(path):
+        logger.warning("%s does not exist yet, waiting for it to appear", path)
+        while not os.path.exists(path):
+            time.sleep(1)
 
+    logger.info("tailing %s", path)
     f = open(path, "r")
     f.seek(0, os.SEEK_END)
     inode = os.fstat(f.fileno()).st_ino
@@ -93,6 +104,7 @@ def follow(path: str):
         time.sleep(0.5)
         try:
             if os.stat(path).st_ino != inode:
+                logger.info("%s rotated, reopening", path)
                 f.close()
                 f = open(path, "r")
                 inode = os.fstat(f.fileno()).st_ino
@@ -101,27 +113,36 @@ def follow(path: str):
 
 
 def tail_source(source: Source, out_queue: "queue.Queue[str]") -> None:
+    matched = 0
     for line in follow(source.path):
         ip = extract_ip(line, source)
         if ip and is_public_ip(ip):
+            matched += 1
             out_queue.put(ip)
+        elif matched == 0:
+            logger.debug("%s: no ip matched line: %r", source.path, line.rstrip())
 
 
 def main() -> None:
+    logger.info("loading config from %s", CONFIG_PATH)
     sources = load_sources(CONFIG_PATH)
     if not sources:
-        print(f"no sources configured in {CONFIG_PATH}", file=sys.stderr)
+        logger.error("no sources configured in %s", CONFIG_PATH)
         sys.exit(1)
+
+    for source in sources:
+        logger.info("configured source: %s (%s)", source.path, source.format)
 
     out_queue: "queue.Queue[str]" = queue.Queue()
     for source in sources:
         threading.Thread(target=tail_source, args=(source, out_queue), daemon=True).start()
 
+    logger.info("started %d source thread(s), waiting for matching requests", len(sources))
     try:
         while True:
             print(out_queue.get(), flush=True)
     except KeyboardInterrupt:
-        pass
+        logger.info("stopping")
 
 
 if __name__ == "__main__":
