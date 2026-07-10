@@ -114,3 +114,7 @@ access.log --tail--> extract IP --filter--> dedupe --> GeoIP lookup --> SSE broa
    endpoint (`/events`).
 6. **Render**: the frontend draws a world map (a fixed-projection SVG, not map tiles) and animates a ping at each hit's
    coordinates, alongside a live feed and running stats.
+
+---
+
+Feedback, contributions, and questions are always welcome, feel free to open an issue or pull request.
