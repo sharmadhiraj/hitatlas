@@ -25,8 +25,12 @@ Tails your web server's access logs, resolves visitor IPs to a city, and shows t
 
 ## Setup
 
+Requires Python 3.10+.
+
 1. **Install dependencies**
    ```
+   python3 -m venv venv
+   source venv/bin/activate
    pip install -r requirements.txt
    ```
 
