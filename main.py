@@ -147,9 +147,14 @@ def main() -> None:
         threading.Thread(target=tail_source, args=(source, out_queue), daemon=True).start()
 
     logger.info("started %d source thread(s), waiting for matching requests", len(sources))
+    last_ip = None
     try:
         while True:
-            print(out_queue.get(), flush=True)
+            ip = out_queue.get()
+            if ip == last_ip:
+                continue
+            last_ip = ip
+            print(ip, flush=True)
     except KeyboardInterrupt:
         logger.info("stopping")
 
