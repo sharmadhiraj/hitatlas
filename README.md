@@ -2,6 +2,8 @@
 
 Tails your web server's access logs, resolves visitor IPs to a city, and shows them as live pings on a world map.
 
+![HitAtlas demo](hitatlas_demo.gif)
+
 ## TLDR
 
 - A Python backend tails Nginx/Apache/Caddy access logs, extracts real visitor IPs, and looks up their city/country from
