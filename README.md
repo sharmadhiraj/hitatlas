@@ -1,46 +1,92 @@
 # HitAtlas
 
-Tails web server access logs, resolves client IPs to lat/lng, and plots them on a world map.
+Tails your web server's access logs, resolves visitor IPs to a city, and shows them as live pings on a world map.
 
-## Usage
+## TLDR
+
+- A Python backend tails Nginx/Apache/Caddy access logs, extracts real visitor IPs, and looks up their city/country from
+  a local database (no external API calls).
+- Each hit is pushed to a browser in real time over Server-Sent Events.
+- A small static frontend renders those hits as animated pings on a 2D world map.
+
+## Components
+
+| Path          | What it is                                                            |
+|---------------|-----------------------------------------------------------------------|
+| `main.py`     | Entry point, wires everything together                                |
+| `config.py`   | Parses `config.toml`                                                  |
+| `tailer.py`   | Follows log files, extracts and filters IPs                           |
+| `geo.py`      | IP → city/country/lat/lng lookup (MaxMind GeoLite2)                   |
+| `sse.py`      | Broadcasts hits to connected browsers over SSE                        |
+| `config.toml` | Which log file(s) to watch, and their format                          |
+| `frontend/`   | Static site: world map + live feed (plain HTML/CSS/JS, no build step) |
+
+## Setup
+
+1. **Install dependencies**
+   ```
+   pip install -r requirements.txt
+   ```
+
+2. **Get a GeoIP database.** Create a free account at https://www.maxmind.com/en/geolite2/signup, generate a license
+   key, and download `GeoLite2-City.mmdb` into the project root (or point `HITATLAS_GEOIP_DB` at it, see
+   `.env.example`).
+
+3. **Configure `config.toml`** with the log file(s) to watch:
+   ```toml
+   [[source]]
+   path = "/var/log/nginx/access.log"
+   format = "nginx-combined"
+   ```
+   Or auto-discover every vhost on a shared server without listing each one:
+   ```toml
+   [[source]]
+   path_glob = "/home/*/logs/nginx/access.log"
+   format = "nginx-combined"
+   ```
+   Supported `format` values: `nginx-combined`, `apache-combined`, `caddy-json`, or `custom_regex` (with a `regex` key
+   using a named `ip` group).
+
+4. **Run the backend**
+   ```
+   python3 main.py
+   ```
+   To keep it running permanently (survives crashes/reboots), see the systemd unit below.
+
+5. **Serve the frontend.** `frontend/` is a plain static site, serve it with any web server. Put it behind the same
+   reverse proxy as your backend's `/events` endpoint (see below), so the browser can reach both from one origin.
+
+### Running as a systemd service
+
+```ini
+[Unit]
+Description=HitAtlas backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory = /path/to/hitatlas
+ExecStart = /path/to/hitatlas/venv/bin/python3 /path/to/hitatlas/main.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```
-python3 main.py
+systemctl daemon-reload
+systemctl enable --now hitatlas
+journalctl -u hitatlas -f
 ```
 
-Reads `config.toml` (or the path in `HITATLAS_CONFIG`). Each `[[source]]` is a log file to tail, either a single `path`, or a `path_glob` to auto-discover every matching file (e.g. every vhost on a shared VPS) without listing each one:
+### Reverse-proxying `/events`
 
-```toml
-[[source]]
-path_glob = "/home/*/logs/nginx/access.log"
-format = "nginx-combined"
-```
+The backend serves Server-Sent Events on `127.0.0.1:8765` (plain HTTP, no CORS, deliberately not exposed to the internet
+directly). Point your reverse proxy's `/events` location at it, `proxy_buffering off` is required or the stream won't
+arrive in real time:
 
-Supported `format` values: `nginx-combined`, `apache-combined`, `caddy-json`, or `custom_regex` (requires a `regex` key with a named `ip` group).
-
-`path_glob` is re-scanned periodically (every 30s by default, set `HITATLAS_RESCAN_INTERVAL` to change) to pick up newly added sites without a restart.
-
-## GeoIP setup
-
-City-level lookups use MaxMind's GeoLite2 City database, looked up locally (no network calls per request):
-
-1. Create a free account at https://www.maxmind.com/en/geolite2/signup
-2. Generate a license key and download `GeoLite2-City.mmdb`.
-3. Place it in the project root, or set `HITATLAS_GEOIP_DB` to its path.
-
-Each matched request is printed as a JSON line and broadcast to any connected frontend:
-
-```
-{"ip": "8.8.8.8", "lat": 37.751, "lng": -97.822, "city": "Ashburn", "country": "US"}
-```
-
-## Live feed (backend)
-
-`main.py` also serves a Server-Sent Events endpoint at `/events`, bound to `127.0.0.1:8765` by default (`HITATLAS_HTTP_HOST` / `HITATLAS_HTTP_PORT` to change). It only speaks plain HTTP with no CORS headers, since it's meant to sit behind an Nginx reverse proxy on the same origin as the frontend, not be exposed to the internet directly.
-
-Example Nginx location block on the frontend's vhost, note `proxy_buffering off` is required, otherwise Nginx buffers the stream and the browser never sees events in real time:
-
-```
+```nginx
 location /events {
     proxy_pass http://127.0.0.1:8765;
     proxy_http_version 1.1;
@@ -50,43 +96,21 @@ location /events {
 }
 ```
 
-The frontend (a separate static site, see `frontend/`) connects with `new EventSource("/events")`.
-
-## Running as a service
-
-A systemd unit keeps `main.py` running and restarts it on crash or reboot:
+## How it works
 
 ```
-[Unit]
-Description=HitAtlas backend
-After=network.target
-
-[Service]
-Type=simple
-WorkingDirectory=/home/hitatlas
-ExecStart=/home/hitatlas/venv/bin/python3 /home/hitatlas/main.py
-Restart=always
-RestartSec=3
-User=root
-
-[Install]
-WantedBy=multi-user.target
+access.log --tail--> extract IP --filter--> dedupe --> GeoIP lookup --> SSE broadcast --> frontend map
 ```
 
-Save as `/etc/systemd/system/hitatlas.service`, then:
-
-```
-systemctl daemon-reload
-systemctl enable --now hitatlas
-journalctl -u hitatlas -f
-```
-
-To auto-restart on every deploy, add a `post-merge` git hook so any `git pull` restarts the service:
-
-```
-# .git/hooks/post-merge (chmod +x)
-#!/bin/sh
-systemctl restart hitatlas
-```
-
-## Work in Progress
+1. **Tail**: each configured log file is followed like `tail -f`, handling log rotation automatically. `path_glob`
+   entries are re-scanned periodically to pick up newly added sites without a restart.
+2. **Extract & filter**: the client IP is pulled out with a regex (or JSON parsing for `caddy-json`), then
+   private/loopback/reserved IPs are dropped.
+3. **Dedupe**: consecutive repeats of the same IP are collapsed, so one browser loading several assets doesn't look like
+   several visitors.
+4. **Geolocate**: each IP is looked up in a local MaxMind GeoLite2 City database, sub-millisecond, no network
+   round-trip.
+5. **Broadcast**: each hit is printed as a JSON line and pushed to every connected browser over a Server-Sent Events
+   endpoint (`/events`).
+6. **Render**: the frontend draws a world map (a fixed-projection SVG, not map tiles) and animates a ping at each hit's
+   coordinates, alongside a live feed and running stats.

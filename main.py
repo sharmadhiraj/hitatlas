@@ -15,7 +15,7 @@ from tailer import rescan_globs, start_all
 
 CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
 GEOIP_DB_PATH = os.environ.get("HITATLAS_GEOIP_DB", "GeoLite2-City.mmdb")
-HTTP_HOST = os.environ.get("HITATLAS_HTTP_HOST", "127.0.0.1")
+HTTP_HOST = "127.0.0.1"
 HTTP_PORT = int(os.environ.get("HITATLAS_HTTP_PORT", "8765"))
 
 logging.basicConfig(
