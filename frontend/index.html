@@ -223,6 +223,7 @@
   const REF_WIDTH = 960;
   const PADDING = 20;
   const ANTARCTICA_MAX_LAT = -60;
+  const ANTIMERIDIAN_SLIVER_MAX_POINTS = 50;
 
   const svg = d3.select("#map-svg").attr("preserveAspectRatio", "xMidYMid meet");
   const landPath = svg.append("path").attr("class", "land");
@@ -240,11 +241,25 @@
     return maxLat;
   }
 
+  function touchesAntimeridian(polygon) {
+    return polygon.some((ring) => ring.some(([lng]) => lng <= -179.9 || lng >= 179.9));
+  }
+
+  function polygonPointCount(polygon) {
+    let count = 0;
+    polygon.forEach((ring) => { count += ring.length; });
+    return count;
+  }
+
   d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").then((topology) => {
     const landFeature = topojson.feature(topology, topology.objects.land).features[0];
-    landFeature.geometry.coordinates = landFeature.geometry.coordinates.filter(
-      (polygon) => polygonMaxLat(polygon) >= ANTARCTICA_MAX_LAT
-    );
+    landFeature.geometry.coordinates = landFeature.geometry.coordinates.filter((polygon) => {
+      if (polygonMaxLat(polygon) < ANTARCTICA_MAX_LAT) return false;
+      if (touchesAntimeridian(polygon) && polygonPointCount(polygon) < ANTIMERIDIAN_SLIVER_MAX_POINTS) {
+        return false;
+      }
+      return true;
+    });
 
     const [[, minLat], [, maxLat]] = d3.geoBounds(landFeature);
     const toRad = (deg) => (deg * Math.PI) / 180;
