@@ -221,23 +221,40 @@
 <script src="https://cdn.jsdelivr.net/npm/topojson-client@3"></script>
 <script>
   const REF_WIDTH = 960;
-  const REF_HEIGHT = 480;
+  const PADDING = 20;
+  const ANTARCTICA_MAX_LAT = -60;
 
-  const svg = d3
-    .select("#map-svg")
-    .attr("viewBox", `0 0 ${REF_WIDTH} ${REF_HEIGHT}`)
-    .attr("preserveAspectRatio", "none");
+  const svg = d3.select("#map-svg").attr("preserveAspectRatio", "xMidYMid meet");
   const landPath = svg.append("path").attr("class", "land");
   const pingsGroup = svg.append("g").attr("class", "pings");
 
-  const projection = d3
-    .geoEquirectangular()
-    .scale(REF_WIDTH / (2 * Math.PI))
-    .translate([REF_WIDTH / 2, REF_HEIGHT / 2]);
+  const scale = (REF_WIDTH - 2 * PADDING) / (2 * Math.PI);
+  const projection = d3.geoEquirectangular().scale(scale);
   const pathGenerator = d3.geoPath(projection);
 
+  function polygonMaxLat(polygon) {
+    let maxLat = -Infinity;
+    polygon.forEach((ring) => ring.forEach(([, lat]) => {
+      if (lat > maxLat) maxLat = lat;
+    }));
+    return maxLat;
+  }
+
   d3.json("https://cdn.jsdelivr.net/npm/world-atlas@2/land-110m.json").then((topology) => {
-    const landFeature = topojson.feature(topology, topology.objects.land);
+    const landFeature = topojson.feature(topology, topology.objects.land).features[0];
+    landFeature.geometry.coordinates = landFeature.geometry.coordinates.filter(
+      (polygon) => polygonMaxLat(polygon) >= ANTARCTICA_MAX_LAT
+    );
+
+    const [[, minLat], [, maxLat]] = d3.geoBounds(landFeature);
+    const toRad = (deg) => (deg * Math.PI) / 180;
+    const topYRaw = -toRad(maxLat);
+    const bottomYRaw = -toRad(minLat);
+    const translateY = PADDING - topYRaw * scale;
+    const refHeight = (bottomYRaw - topYRaw) * scale + 2 * PADDING;
+
+    projection.translate([REF_WIDTH / 2, translateY]);
+    svg.attr("viewBox", `0 0 ${REF_WIDTH} ${refHeight}`);
     landPath.attr("d", pathGenerator(landFeature));
   });
 
