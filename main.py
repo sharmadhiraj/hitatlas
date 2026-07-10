@@ -1,24 +1,60 @@
 import ipaddress
-import subprocess
+import json
+import os
+import queue
+import re
+import sys
+import threading
+import time
+import tomllib
+from dataclasses import dataclass
 
-CMD = [
-    "tcpdump",
-    "-i", "any",
-    "-n",
-    "-l",
-    "inbound and tcp[tcpflags] == tcp-syn and (dst port 80 or dst port 443)",
-]
+CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
+
+PRESET_PATTERNS = {
+    "nginx-combined": re.compile(r'^(?P<ip>\S+) \S+ \S+ \[.+?\] "\S+ \S+ \S+" \d+ \d+'),
+    "apache-combined": re.compile(r'^(?P<ip>\S+) \S+ \S+ \[.+?\] "\S+ \S+ \S+" \d+ \d+'),
+}
+JSON_FORMATS = {"caddy-json"}
 
 
-def extract_src_ip(line: str) -> str | None:
-    if " > " not in line:
-        return None
-    before_arrow = line.split(" > ", 1)[0]
-    src_token = before_arrow.split()[-1]
-    if "." not in src_token:
-        return None
-    src_ip = src_token.rsplit(".", 1)[0]
-    return src_ip
+@dataclass
+class Source:
+    path: str
+    format: str
+    regex: re.Pattern[str] | None
+
+
+def load_sources(config_path: str) -> list[Source]:
+    with open(config_path, "rb") as f:
+        config = tomllib.load(f)
+
+    sources = []
+    for raw in config.get("source", []):
+        fmt = raw["format"]
+        if fmt == "custom_regex":
+            regex = re.compile(raw["regex"])
+        elif fmt in JSON_FORMATS:
+            regex = None
+        elif fmt in PRESET_PATTERNS:
+            regex = PRESET_PATTERNS[fmt]
+        else:
+            raise ValueError(f"unknown format {fmt!r} for source {raw['path']!r}")
+        sources.append(Source(path=raw["path"], format=fmt, regex=regex))
+    return sources
+
+
+def extract_ip(line: str, source: Source) -> str | None:
+    if source.format in JSON_FORMATS:
+        try:
+            data = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        return data.get("request", {}).get("remote_ip")
+
+    assert source.regex is not None
+    match = source.regex.match(line)
+    return match.group("ip") if match else None
 
 
 def is_public_ip(ip: str) -> bool:
@@ -36,14 +72,53 @@ def is_public_ip(ip: str) -> bool:
     )
 
 
-proc = subprocess.Popen(CMD, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+def follow(path: str):
+    while not os.path.exists(path):
+        time.sleep(1)
 
-assert proc.stdout is not None
+    f = open(path, "r")
+    f.seek(0, os.SEEK_END)
+    inode = os.fstat(f.fileno()).st_ino
 
-try:
-    for raw_line in proc.stdout:
-        extracted_ip = extract_src_ip(raw_line)
-        if extracted_ip and is_public_ip(extracted_ip):
-            print(extracted_ip)
-except KeyboardInterrupt:
-    proc.terminate()
+    while True:
+        line = f.readline()
+        if line:
+            yield line
+            continue
+
+        time.sleep(0.5)
+        try:
+            if os.stat(path).st_ino != inode:
+                f.close()
+                f = open(path, "r")
+                inode = os.fstat(f.fileno()).st_ino
+        except FileNotFoundError:
+            continue
+
+
+def tail_source(source: Source, out_queue: "queue.Queue[str]") -> None:
+    for line in follow(source.path):
+        ip = extract_ip(line, source)
+        if ip and is_public_ip(ip):
+            out_queue.put(ip)
+
+
+def main() -> None:
+    sources = load_sources(CONFIG_PATH)
+    if not sources:
+        print(f"no sources configured in {CONFIG_PATH}", file=sys.stderr)
+        sys.exit(1)
+
+    out_queue: "queue.Queue[str]" = queue.Queue()
+    for source in sources:
+        threading.Thread(target=tail_source, args=(source, out_queue), daemon=True).start()
+
+    try:
+        while True:
+            print(out_queue.get(), flush=True)
+    except KeyboardInterrupt:
+        pass
+
+
+if __name__ == "__main__":
+    main()

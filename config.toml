@@ -1,0 +1,16 @@
+[[source]]
+path = "/var/log/nginx/access.log"
+format = "nginx-combined"
+
+# [[source]]
+# path = "/var/log/apache2/access.log"
+# format = "apache-combined"
+
+# [[source]]
+# path = "/var/log/caddy/access.log"
+# format = "caddy-json"
+
+# [[source]]
+# path = "/var/log/myapp/custom.log"
+# format = "custom_regex"
+# regex = '(?P<ip>\d+\.\d+\.\d+\.\d+) - '
