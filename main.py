@@ -1,3 +1,4 @@
+import glob
 import ipaddress
 import json
 import logging
@@ -51,8 +52,16 @@ def load_sources(config_path: str) -> list[Source]:
         elif fmt in PRESET_PATTERNS:
             regex = PRESET_PATTERNS[fmt]
         else:
-            raise ValueError(f"unknown format {fmt!r} for source {raw['path']!r}")
-        sources.append(Source(path=raw["path"], format=fmt, regex=regex))
+            raise ValueError(f"unknown format {fmt!r}")
+
+        if "path_glob" in raw:
+            paths = sorted(glob.glob(raw["path_glob"]))
+            if not paths:
+                logger.warning("path_glob %r matched no files yet", raw["path_glob"])
+            for path in paths:
+                sources.append(Source(path=path, format=fmt, regex=regex))
+        else:
+            sources.append(Source(path=raw["path"], format=fmt, regex=regex))
     return sources
 
 
