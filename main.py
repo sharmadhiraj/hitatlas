@@ -6,8 +6,12 @@ import re
 import sys
 import threading
 import time
-import tomllib
 from dataclasses import dataclass
+
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib  # type: ignore[import-not-found,no-redef]
 
 CONFIG_PATH = os.environ.get("HITATLAS_CONFIG", "config.toml")
 
