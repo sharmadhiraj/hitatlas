@@ -122,25 +122,25 @@ function pingMap(hit) {
     .append("circle")
     .attr("cx", x)
     .attr("cy", y)
-    .attr("r", 3)
-    .attr("fill", "#35d0ba")
-    .attr("fill-opacity", 0.6)
-    .attr("stroke", "#35d0ba")
-    .attr("stroke-width", 2);
+    .attr("r", 0)
+    .attr("fill", "#35d0ba");
 
   circle.append("title").text(`${formatPlace(hit)}\n${hit.ip}`);
 
   const start = performance.now();
-  const duration = 1400;
-  const maxRadius = 22;
+  const popDuration = 120;
+  const fadeDuration = 500;
+  const maxRadius = 4;
 
   function animate(now) {
-    const t = Math.min((now - start) / duration, 1);
-    circle
-      .attr("r", 3 + t * maxRadius)
-      .attr("fill-opacity", 0.6 * (1 - t))
-      .attr("stroke-opacity", 1 - t);
-    if (t < 1) {
+    const elapsed = now - start;
+    if (elapsed < popDuration) {
+      circle.attr("r", maxRadius * (elapsed / popDuration)).attr("fill-opacity", 1);
+    } else {
+      const t = Math.min((elapsed - popDuration) / fadeDuration, 1);
+      circle.attr("r", maxRadius).attr("fill-opacity", 1 - t);
+    }
+    if (elapsed < popDuration + fadeDuration) {
       requestAnimationFrame(animate);
     } else {
       circle.remove();
