@@ -28,14 +28,19 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   }
 
+  body {
+    display: flex;
+    overflow: hidden;
+  }
+
   #map {
-    position: absolute;
-    inset: 0;
+    flex: 1;
+    min-width: 0;
     background: var(--bg);
   }
 
   .hud {
-    position: absolute;
+    position: fixed;
     z-index: 1000;
     pointer-events: none;
   }
@@ -48,13 +53,20 @@
     top: 16px;
     left: 16px;
     display: flex;
-    align-items: center;
-    gap: 10px;
+    flex-direction: column;
+    gap: 4px;
     background: var(--panel);
     border: 1px solid var(--border);
     border-radius: 10px;
     padding: 10px 16px;
     backdrop-filter: blur(6px);
+    max-width: min(90vw, 360px);
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
   }
 
   .header h1 {
@@ -78,21 +90,20 @@
     box-shadow: 0 0 6px var(--dot-live);
   }
 
-  .count {
+  .stats {
     font-variant-numeric: tabular-nums;
     color: var(--muted);
-    font-size: 13px;
+    font-size: 12px;
+    line-height: 1.4;
   }
 
   .feed {
-    top: 16px;
-    right: 16px;
     width: 280px;
-    max-height: calc(100vh - 32px);
+    flex-shrink: 0;
+    height: 100%;
     overflow-y: auto;
     background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 10px;
+    border-left: 1px solid var(--border);
     backdrop-filter: blur(6px);
   }
 
@@ -144,6 +155,10 @@
   }
 
   @media (max-width: 640px) {
+    body {
+      flex-direction: column;
+    }
+
     .header {
       top: 10px;
       left: 10px;
@@ -155,17 +170,15 @@
       font-size: 13px;
     }
 
-    .count {
-      font-size: 12px;
+    .stats {
+      font-size: 11px;
     }
 
     .feed {
-      top: auto;
-      right: 10px;
-      left: 10px;
-      bottom: 10px;
       width: auto;
-      max-height: 30vh;
+      height: 30vh;
+      border-left: none;
+      border-top: 1px solid var(--border);
     }
   }
 </style>
@@ -175,12 +188,14 @@
 <div id="map"></div>
 
 <div class="hud header">
-  <span class="status-dot" id="status-dot"></span>
-  <h1>HitAtlas</h1>
-  <span class="count" id="count">0 hits</span>
+  <div class="header-top">
+    <span class="status-dot" id="status-dot"></span>
+    <h1>HitAtlas</h1>
+  </div>
+  <div class="stats" id="stats">0 hits</div>
 </div>
 
-<div class="hud feed">
+<div class="feed">
   <h2>Live feed</h2>
   <div id="feed-list"></div>
 </div>
@@ -201,8 +216,6 @@
     maxBoundsViscosity: 1.0,
   });
 
-  map.fitBounds(worldBounds);
-
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
     subdomains: "abcd",
@@ -210,18 +223,48 @@
     noWrap: true,
   }).addTo(map);
 
-  window.addEventListener("resize", () => map.fitBounds(worldBounds));
+  function fitMapToCover() {
+    map.invalidateSize();
+    const size = map.getSize();
+    const zoom = Math.max(0, Math.ceil(Math.log2(Math.max(size.x, size.y) / 256)));
+    map.setView([0, 0], zoom, { animate: false });
+  }
+
+  fitMapToCover();
+  window.addEventListener("resize", fitMapToCover);
 
   const statusDot = document.getElementById("status-dot");
-  const countEl = document.getElementById("count");
+  const statsEl = document.getElementById("stats");
   const feedList = document.getElementById("feed-list");
 
   let hitCount = 0;
+  const uniqueIps = new Set();
+  const uniqueCountries = new Set();
+  const startTime = performance.now();
   const MAX_FEED_ITEMS = 10;
 
   function formatPlace(hit) {
     const parts = [hit.city, hit.country].filter(Boolean);
     return parts.length ? parts.join(", ") : "Unknown location";
+  }
+
+  function formatDuration(ms) {
+    const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${s}s`;
+    return `${s}s`;
+  }
+
+  function updateStats() {
+    const hits = `${hitCount} hit${hitCount === 1 ? "" : "s"}`;
+    const users = `${uniqueIps.size} user${uniqueIps.size === 1 ? "" : "s"}`;
+    const elapsed = formatDuration(performance.now() - startTime);
+    const countries =
+      uniqueCountries.size === 1 ? "1 country" : `${uniqueCountries.size} countries`;
+    statsEl.textContent = `${hits} from ${users} in ${elapsed} from ${countries}`;
   }
 
   function addFeedItem(hit) {
@@ -282,13 +325,17 @@
     source.onmessage = (event) => {
       const hit = JSON.parse(event.data);
       hitCount += 1;
-      countEl.textContent = `${hitCount} hit${hitCount === 1 ? "" : "s"}`;
+      uniqueIps.add(hit.ip);
+      if (hit.country) uniqueCountries.add(hit.country);
+      updateStats();
       pingMap(hit);
       addFeedItem(hit);
     };
   }
 
   connect();
+  updateStats();
+  setInterval(updateStats, 1000);
 </script>
 
 </body>

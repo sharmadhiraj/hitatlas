@@ -52,4 +52,41 @@ location /events {
 
 The frontend (a separate static site, see `frontend/`) connects with `new EventSource("/events")`.
 
+## Running as a service
+
+A systemd unit keeps `main.py` running and restarts it on crash or reboot:
+
+```
+[Unit]
+Description=HitAtlas backend
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/hitatlas
+ExecStart=/home/hitatlas/venv/bin/python3 /home/hitatlas/main.py
+Restart=always
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Save as `/etc/systemd/system/hitatlas.service`, then:
+
+```
+systemctl daemon-reload
+systemctl enable --now hitatlas
+journalctl -u hitatlas -f
+```
+
+To auto-restart on every deploy, add a `post-merge` git hook so any `git pull` restarts the service:
+
+```
+# .git/hooks/post-merge (chmod +x)
+#!/bin/sh
+systemctl restart hitatlas
+```
+
 ## Work in Progress
