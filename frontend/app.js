@@ -149,13 +149,17 @@ function pingMap(hit) {
   requestAnimationFrame(animate);
 }
 
+let eventSource = null;
+
 function connect() {
-  const source = new EventSource("/events");
+  if (eventSource) eventSource.close();
 
-  source.onopen = () => statusDot.classList.add("live");
-  source.onerror = () => statusDot.classList.remove("live");
+  eventSource = new EventSource("/events");
 
-  source.onmessage = (event) => {
+  eventSource.onopen = () => statusDot.classList.add("live");
+  eventSource.onerror = () => statusDot.classList.remove("live");
+
+  eventSource.onmessage = (event) => {
     const hit = JSON.parse(event.data);
     hitCount += 1;
     uniqueIps.add(hit.ip);
@@ -165,6 +169,12 @@ function connect() {
     addFeedItem(hit);
   };
 }
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && eventSource?.readyState !== EventSource.OPEN) {
+    connect();
+  }
+});
 
 connect();
 updateStats();
