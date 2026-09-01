@@ -4,8 +4,8 @@ Tails your web server's access logs, resolves visitor IPs to a city, and shows t
 
 ![HitAtlas demo](hitatlas_demo.gif)
 
-**<a href="https://hitatlas.onrender.com" target="_blank" rel="noopener">Live demo</a>** (fake random hits, hosted free
-on Render, first load can take ~30-60s to wake up)
+**[Live demo](https://hitatlas.onrender.com)** (fake random hits, hosted free on Render, first load can take ~30-60s to
+wake up)
 
 ## How it works
 
