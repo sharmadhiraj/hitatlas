@@ -4,24 +4,26 @@ Tails your web server's access logs, resolves visitor IPs to a city, and shows t
 
 ![HitAtlas demo](hitatlas_demo.gif)
 
-## TLDR
+**[Live demo](https://hitatlas.onrender.com)** (fake random hits, hosted free on Render, first load can take ~30-60s to
+wake up)
 
-- A Python backend tails Nginx/Apache/Caddy access logs, extracts real visitor IPs, and looks up their city/country from
-  a local database (no external API calls).
-- Each hit is pushed to a browser in real time over Server-Sent Events.
-- A small static frontend renders those hits as animated pings on a 2D world map.
+## How it works
 
-## Components
+- A Python backend tails Nginx/Apache/Caddy access logs, extracts visitor IPs, and looks up their city/country from a
+  local database (no external API calls).
+- Each hit is pushed to the browser in real time over Server-Sent Events.
+- A static frontend renders those hits as animated pings on a 2D world map.
 
-| Path          | What it is                                                            |
-|---------------|-----------------------------------------------------------------------|
-| `main.py`     | Entry point, wires everything together                                |
-| `config.py`   | Parses `config.toml`                                                  |
-| `tailer.py`   | Follows log files, extracts and filters IPs                           |
-| `geo.py`      | IP → city/country/lat/lng lookup (MaxMind GeoLite2)                   |
-| `sse.py`      | Broadcasts hits to connected browsers over SSE                        |
-| `config.toml` | Which log file(s) to watch, and their format                          |
-| `frontend/`   | Static site: world map + live feed (plain HTML/CSS/JS, no build step) |
+| Path          | What it is                                          |
+|---------------|-----------------------------------------------------|
+| `main.py`     | Entry point, wires everything together              |
+| `config.py`   | Parses `config.toml`                                |
+| `tailer.py`   | Follows log files, extracts and filters IPs         |
+| `geo.py`      | IP → city/country/lat/lng lookup (MaxMind GeoLite2) |
+| `sse.py`      | Broadcasts hits to connected browsers over SSE      |
+| `demo.py`     | Generates fake random hits (`--demo` flag)          |
+| `config.toml` | Which log file(s) to watch, and their format        |
+| `frontend/`   | Static site: world map + live feed (no build step)  |
 
 ## Setup
 
@@ -35,8 +37,7 @@ Requires Python 3.10+.
    ```
 
 2. **Get a GeoIP database.** Create a free account at https://www.maxmind.com/en/geolite2/signup, generate a license
-   key, and download `GeoLite2-City.mmdb` into the project root (or point `HITATLAS_GEOIP_DB` at it, see
-   `.env.example`).
+   key, and download `GeoLite2-City.mmdb` into the project root (or point `HITATLAS_GEOIP_DB` at it).
 
 3. **Configure `config.toml`** with the log file(s) to watch:
    ```toml
@@ -44,7 +45,7 @@ Requires Python 3.10+.
    path = "/var/log/nginx/access.log"
    format = "nginx-combined"
    ```
-   Or auto-discover every vhost on a shared server without listing each one:
+   Or auto-discover every vhost on a shared server:
    ```toml
    [[source]]
    path_glob = "/home/*/logs/nginx/access.log"
@@ -53,16 +54,19 @@ Requires Python 3.10+.
    Supported `format` values: `nginx-combined`, `apache-combined`, `caddy-json`, or `custom_regex` (with a `regex` key
    using a named `ip` group).
 
-4. **Run the backend**
+4. **Run it**
    ```
    python3 main.py
    ```
-   To keep it running permanently (survives crashes/reboots), see the systemd unit below.
+   Or try it without any log files or GeoIP database, with fake random hits:
+   ```
+   python3 main.py --demo
+   ```
 
-5. **Serve the frontend.** `frontend/` is a plain static site, serve it with any web server. Put it behind the same
-   reverse proxy as your backend's `/events` endpoint (see below), so the browser can reach both from one origin.
+5. **Open the frontend.** `frontend/` is a plain static site. `main.py` serves it itself on the same port as `/events`,
+   so just open `http://<host>:8765/` (or put it behind a reverse proxy, see below).
 
-### Running as a systemd service
+## Running as a systemd service
 
 ```ini
 [Unit]
@@ -86,14 +90,13 @@ systemctl enable --now hitatlas
 journalctl -u hitatlas -f
 ```
 
-### Reverse-proxying `/events`
+## Reverse-proxying `/events`
 
-The backend serves Server-Sent Events on `127.0.0.1:8765` (plain HTTP, no CORS, deliberately not exposed to the internet
-directly). Point your reverse proxy's `/events` location at it, `proxy_buffering off` is required or the stream won't
-arrive in real time:
+The backend listens on `127.0.0.1:8765` by default (plain HTTP, deliberately not exposed to the internet directly).
+Point your reverse proxy at it, `proxy_buffering off` is required or the stream won't arrive in real time:
 
 ```nginx
-location /events {
+location / {
     proxy_pass http://127.0.0.1:8765;
     proxy_http_version 1.1;
     proxy_set_header Connection "";
@@ -101,25 +104,6 @@ location /events {
     proxy_read_timeout 24h;
 }
 ```
-
-## How it works
-
-```
-access.log --tail--> extract IP --filter--> dedupe --> GeoIP lookup --> SSE broadcast --> frontend map
-```
-
-1. **Tail**: each configured log file is followed like `tail -f`, handling log rotation automatically. `path_glob`
-   entries are re-scanned periodically to pick up newly added sites without a restart.
-2. **Extract & filter**: the client IP is pulled out with a regex (or JSON parsing for `caddy-json`), then
-   private/loopback/reserved IPs are dropped.
-3. **Dedupe**: consecutive repeats of the same IP are collapsed, so one browser loading several assets doesn't look like
-   several visitors.
-4. **Geolocate**: each IP is looked up in a local MaxMind GeoLite2 City database, sub-millisecond, no network
-   round-trip.
-5. **Broadcast**: each hit is printed as a JSON line and pushed to every connected browser over a Server-Sent Events
-   endpoint (`/events`).
-6. **Render**: the frontend draws a world map (a fixed-projection SVG, not map tiles) and animates a ping at each hit's
-   coordinates, alongside a live feed and running stats.
 
 ---
 
