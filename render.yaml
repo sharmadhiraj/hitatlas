@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: hitatlas-demo
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python3 main.py --demo
+    envVars:
+      - key: HITATLAS_LOG_LEVEL
+        value: INFO

@@ -15,11 +15,10 @@ def broadcast(payload: str) -> None:
             subscriber.put(payload)
 
 
-class SSEHandler(http.server.BaseHTTPRequestHandler):
+class SSEHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path != "/events":
-            self.send_response(404)
-            self.end_headers()
+            super().do_GET()
             return
 
         self.send_response(200)
